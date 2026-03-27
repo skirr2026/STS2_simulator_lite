@@ -1,0 +1,359 @@
+# 实现计划：STS2 战斗模拟器
+
+## 概述
+
+采用 TDD（测试优先）策略，按模块从底层到顶层逐步构建。每个实现任务前先写测试，再实现功能，确保每一步都有测试覆盖。
+
+## 任务
+
+- [ ] 1. 项目脚手架
+  - 创建 `sts2_simulator/` 目录结构（combat/、engine/、data/、runner/、bridge/）
+  - 创建 `tests/unit/` 和 `tests/property/` 目录结构
+  - 创建 `pyproject.toml` 或 `requirements.txt`，声明依赖：`pytest>=7.0`、`hypothesis>=6.0`、`pyzmq>=25.0`
+  - 创建各包的 `__init__.py` 文件
+  - 创建 `tests/property/conftest.py`，预留 Hypothesis 策略定义位置
+  - _需求：7.9（无全局共享状态，支持多进程并行）_
+
+
+- [ ] 2. 核心数据模型
+  - [ ] 2.1 实现所有 dataclass 定义
+    - 在 `combat/player.py` 实现 `Player` dataclass
+    - 在 `combat/enemy.py` 实现 `Enemy`、`IntentType`、`Intent` dataclass/枚举
+    - 在 `combat/context.py` 实现 `BattleContext` dataclass（EventBus/Registry 字段先用 `Any` 占位）
+    - 在 `data/registry.py` 实现 `CardDef`、`CardInstance`、`BuffDef`、`RelicDef`、`PotionDef`、`MoveDef`、`EnemyDef` dataclass
+    - 在 `runner/config.py` 实现 `EnemyConfig`、`SingleBattleConfig`、`CampaignConfig` dataclass
+    - _设计文档：数据模型章节_
+    - _需求：1.1、2、5.1_
+  - [ ]* 2.2 为核心数据模型编写单元测试
+    - 测试 `Player` 默认值和字段类型
+    - 测试 `Enemy` 的 `is_dead` 初始值为 False
+    - 测试 `IntentType` 枚举值
+    - 测试 `CardDef` 的 `exhaust`、`playable` 默认值
+    - 文件：`tests/unit/test_models.py`
+
+
+- [ ] 3. Registry 注册表
+  - [ ] 3.1 先写 Registry 单元测试
+    - 测试注册卡牌后可通过 ID 查询
+    - 测试查询不存在 ID 时抛出 `KeyError`
+    - 测试 `load_from_dict` 批量加载
+    - 文件：`tests/unit/test_registry.py`
+    - _需求：6.5、6.8、6.9、6.10_
+  - [ ] 3.2 实现 `Registry` 类
+    - 在 `data/registry.py` 实现 `register_card/relic/enemy/potion/buff` 方法
+    - 实现 `get_card/relic/enemy/potion/buff` 方法（不存在则 raise KeyError）
+    - 实现 `load_from_json` 和 `load_from_dict` 方法
+    - _设计文档：Registry 章节_
+    - _需求：6.4、6.5、6.8、6.9、6.10_
+
+
+- [ ] 4. 内置静态资源数据
+  - [ ] 4.1 先写静态资源数据测试
+    - 测试内置卡牌数量 ≥ 15，覆盖全部 7 种机制
+    - 测试内置遗物数量 ≥ 5，覆盖多种触发时机
+    - 测试内置敌人数量 ≥ 3，每种有完整 move_order
+    - 测试内置药水数量 = 4
+    - 测试内置 Buff/Debuff 包含 strength/dexterity/vulnerable/weak/ritual
+    - 文件：`tests/unit/test_static_data.py`
+    - _需求：6.1、6.2、6.3、4.1_
+  - [ ] 4.2 实现内置卡牌数据（`data/cards.py`）
+    - 实现 16 张卡牌：strike、heavy_blade、twin_strike、pommel_strike、whirlwind、cleave、defend、iron_wave、shrug_it_off、battle_trance、flex、inflame、clothesline、bash、thunderclap、anger
+    - 每张卡牌使用 `CardDef` dataclass，effects 字段采用数据驱动格式
+    - 提供 `register_builtin_cards(registry: Registry)` 函数
+    - _设计文档：内置卡牌章节_
+    - _需求：6.1、6.6、6.7_
+  - [ ] 4.3 实现内置遗物数据（`data/relics.py`）
+    - 实现 5 个遗物：akabeko、bag_of_preparation、bronze_scales、pen_nib、odd_mushroom
+    - 提供 `register_builtin_relics(registry: Registry)` 函数
+    - _设计文档：内置遗物章节_
+    - _需求：6.2_
+  - [ ] 4.4 实现内置敌人数据（`data/enemies.py`）
+    - 实现 3 种敌人：jaw_worm、acid_slime_m、sentinel，均采用 sequential_loop 模式
+    - 提供 `register_builtin_enemies(registry: Registry)` 函数
+    - _设计文档：内置敌人章节_
+    - _需求：6.3、5.3_
+  - [ ] 4.5 实现内置药水数据（`data/potions.py`）
+    - 实现 4 种药水：block_potion、attack_potion、card_draw_potion、energy_potion
+    - 提供 `register_builtin_potions(registry: Registry)` 函数
+    - _需求：9.1_
+  - [ ] 4.6 实现内置 Buff/Debuff 数据（`data/buffs.py`）
+    - 实现 5 种 Buff：strength、dexterity、vulnerable、weak、ritual
+    - 提供 `register_builtin_buffs(registry: Registry)` 函数
+    - _设计文档：内置 Buff/Debuff 章节_
+    - _需求：4.1_
+
+
+- [ ] 5. EventBus
+  - [ ] 5.1 先写 EventBus 单元测试
+    - 测试注册处理器后 emit 可触发
+    - 测试优先级排序（高优先级先执行）
+    - 测试返回 `STOP_PROPAGATION` 时中断传播，emit 返回 False
+    - 测试未注册事件 emit 不报错，返回 True
+    - 文件：`tests/unit/test_event_bus.py`
+    - _设计文档：EventBus 章节_
+  - [ ] 5.2 实现 `EventBus` 类（`engine/event_bus.py`）
+    - 实现 `STOP_PROPAGATION` 哨兵对象
+    - 实现 `on(event, handler, priority)` 方法，按优先级降序排列
+    - 实现 `emit(event, ctx, **kwargs)` 方法，返回 bool
+    - _设计文档：EventBus 章节_
+
+
+- [ ] 6. BuffManager
+  - [ ] 6.1 先写 BuffManager 单元测试
+    - 测试 `apply` 叠加层数
+    - 测试 `tick` 减层，归零时移除
+    - 测试 `is_permanent=True` 的 Buff 不被 tick 减层
+    - 测试中毒等产生 HP 变化时触发死亡检查
+    - 文件：`tests/unit/test_buff_manager.py`
+    - _需求：4.2、4.3_
+  - [ ] 6.2 实现 `BuffManager` 类（`engine/buff_manager.py`）
+    - 实现 `apply(target, buff_id, stacks, ctx)` 方法，触发 `on_buff_applied` 事件
+    - 实现 `tick(target, ctx)` 方法，减层归零则移除，产生 HP 变化时触发死亡检查
+    - 实现 `tick_all(ctx)` 方法，对所有单位执行 tick
+    - _设计文档：BuffManager 章节_
+    - _需求：4.2、4.3_
+  - [ ]* 6.3 为力量加成编写属性测试
+    - **属性 7：力量加成伤害计算**
+    - **验证：需求 4.4**
+    - 文件：`tests/property/test_damage_properties.py`
+  - [ ]* 6.4 为敏捷加成编写属性测试
+    - **属性 8：敏捷加成 Block 计算**
+    - **验证：需求 4.5**
+    - 文件：`tests/property/test_damage_properties.py`
+
+
+- [ ] 7. EffectResolver
+  - [ ] 7.1 先写 EffectResolver 单元测试
+    - 测试 `deal_damage`：伤害 < Block 时 HP 不变，Block 减少
+    - 测试 `deal_damage`：伤害 > Block 时 HP 减少，Block 归零
+    - 测试 `deal_damage_all`：对所有存活敌人生效，跳过已死亡敌人
+    - 测试 `deal_damage_multi`：每次 hit 独立触发 Block 抵消
+    - 测试 `gain_block`：正确增加 Block 值
+    - 测试 `draw_cards`：从牌堆抽牌到手牌
+    - 测试 `apply_buff`：调用 BuffManager.apply
+    - 测试 `gain_energy`：增加玩家能量
+    - 测试脆弱 + 虚弱同时存在时的组合计算
+    - 文件：`tests/unit/test_effect_resolver.py`
+    - _需求：3.6、3.7、3.11、3.12、4.4、4.5、4.6、4.7、6.7_
+  - [ ] 7.2 实现 `EffectResolver` 类（`engine/effect_resolver.py`）
+    - 实现 `resolve(effect, ctx, source, target)` 方法
+    - 实现 `deal_damage`、`deal_damage_all`、`deal_damage_multi`、`gain_block`、`draw_cards`、`apply_buff`、`gain_energy` 七种效果类型
+    - 实现 `resolve_damage(source, target, base_value, ctx)` 子流程（含力量/虚弱/脆弱修正、Block 抵消、死亡检查）
+    - 实现 `compute_preview(card, ctx)` 伤害预览计算函数
+    - _设计文档：EffectResolver 章节、伤害结算子流程、伤害预览计算章节_
+    - _需求：3.6、3.7、3.11、3.12、6.7_
+  - [ ]* 7.3 为 Block 先于 HP 被消耗编写属性测试
+    - **属性 3：Block 先于 HP 被消耗**
+    - **验证：需求 3.6**
+    - 文件：`tests/property/test_damage_properties.py`
+  - [ ]* 7.4 为伤害结算后 HP 不超过上限编写属性测试
+    - **属性 4：伤害结算后 HP 不超过上限**
+    - **验证：需求 3.6、4.x**
+    - 文件：`tests/property/test_damage_properties.py`
+  - [ ]* 7.5 为脆弱状态伤害计算编写属性测试
+    - **属性 5：脆弱状态伤害计算**
+    - **验证：需求 4.6**
+    - 文件：`tests/property/test_damage_properties.py`
+  - [ ]* 7.6 为虚弱状态伤害计算编写属性测试
+    - **属性 6：虚弱状态伤害计算**
+    - **验证：需求 4.7**
+    - 文件：`tests/property/test_damage_properties.py`
+
+
+- [ ] 8. CardPile 牌堆管理
+  - [ ] 8.1 先写 CardPile 单元测试
+    - 测试抓牌堆有牌时正常抓牌
+    - 测试抓牌堆为空时自动洗入弃牌堆后继续抓牌
+    - 测试抓牌堆和弃牌堆均为空时终止抓牌
+    - 测试手牌已满（10张）时新抓的牌进入弃牌堆
+    - 测试弃置手牌到弃牌堆
+    - 文件：`tests/unit/test_card_pile.py`
+    - _需求：2（抓牌流程子流程）_
+  - [ ] 8.2 实现 `CardPile` 相关逻辑（`combat/card_pile.py`）
+    - 实现 `draw_cards(ctx, n)` 函数：循环 n 次，处理牌堆空时洗牌逻辑，手牌满时入弃牌堆
+    - 实现 `discard_hand(ctx)` 函数：将手牌全部移入弃牌堆
+    - 实现 `shuffle_discard_to_draw(ctx)` 函数：洗入抓牌堆
+    - _设计文档：战斗主循环章节（抓牌流程）_
+    - _需求：2（抓牌流程子流程）_
+  - [ ]* 8.3 为抓牌堆空时自动洗牌编写属性测试
+    - **属性 12：抓牌堆空时自动洗入弃牌堆**
+    - **验证：需求 2（抓牌流程子流程）**
+    - 文件：`tests/property/test_combat_properties.py`
+  - [ ]* 8.4 为手牌上限编写属性测试
+    - **属性 13：手牌上限 10 张**
+    - **验证：需求 2（抓牌流程子流程）**
+    - 文件：`tests/property/test_combat_properties.py`
+
+
+- [ ] 9. CombatManager 战斗主循环
+  - [ ] 9.1 先写 CombatManager 初始化单元测试
+    - 测试合法配置初始化成功，State 字段完整（player、enemies、turn=1、phase、legal_actions、result=null）
+    - 测试不存在的卡牌 ID 返回错误，拒绝创建 Battle
+    - 测试不存在的遗物 ID 返回错误
+    - 测试不存在的敌人 ID 返回错误
+    - 文件：`tests/unit/test_combat_manager.py`
+    - _需求：1.1、1.2、1.3_
+  - [ ] 9.2 实现 `CombatManager` 初始化逻辑（`combat/manager.py`）
+    - 实现 `__init__(config, registry, on_state_change)` 方法
+    - 从 Registry 查询所有卡牌/遗物/敌人/药水定义，构建实例
+    - 将牌组洗入 draw_pile，为遗物注册 EventBus 处理器（优先级=10）
+    - emit `battle_start`，为每个 Enemy 计算初始 Intent
+    - _设计文档：CombatManager 章节、阶段1初始化_
+    - _需求：1.1、1.2、1.3_
+  - [ ] 9.3 先写 play_card 单元测试
+    - 测试打出合法卡牌后能量减少、卡牌进入弃牌堆
+    - 测试 exhaust=True 的卡牌进入 exhaust_pile 而非 discard_pile
+    - 测试能量不足返回 `insufficient_energy` 错误
+    - 测试手牌索引越界返回 `invalid_hand_index` 错误
+    - 测试 playable=False 的卡牌返回 `card_not_playable` 错误
+    - 测试目标已死亡返回 `invalid_target` 错误
+    - 测试战斗结束后打牌返回 `battle_already_ended` 错误
+    - _需求：3.1、3.2、3.3、3.4、3.5、7.8_
+  - [ ] 9.4 实现 `play_card`、`use_potion`、`end_turn` 方法
+    - 实现验证顺序（战斗结束→phase→hand_index→playable→能量→目标）
+    - 实现 emit pre_action → 执行效果 → 移牌 → emit post_action/on_card_played → 死亡检查 → 更新 preview_damage → 推送 State
+    - 实现 `use_potion`：验证槽位、目标，执行效果，槽位置 None
+    - 实现 `end_turn`：emit turn_end → buff tick_all → 弃置手牌 → 敌人行动阶段
+    - _设计文档：阶段3主控行动、阶段4回合结束、阶段5敌人行动_
+    - _需求：3.1-3.13、9.6-9.9_
+  - [ ] 9.5 先写敌人行动单元测试
+    - 测试 sequential_loop 敌人按 move_order 顺序执行
+    - 测试死亡敌人跳过行动
+    - 测试 Intent 在每回合结束后正确更新
+    - 测试 Player HP≤0 时触发战斗失败
+    - _需求：5.2、5.4、5.5、5.6_
+  - [ ] 9.6 实现敌人行动阶段逻辑
+    - 实现 `_run_enemy_phase(ctx)` 方法
+    - 根据 move_pattern 确定本回合 Move（sequential_loop 或 fn）
+    - 执行 Move 的 effects，调用 EffectResolver
+    - 死亡检查，更新 move_index，计算下一回合 Intent
+    - emit enemy_phase_start/end，buff tick_all
+    - _设计文档：阶段5敌人行动、sequential_loop 模式_
+    - _需求：5.2、5.4、5.5、5.6_
+  - [ ] 9.7 实现 `get_state` 和 `get_legal_actions` 方法
+    - 实现 `get_state()` 返回完整 State JSON 结构（含 preview_damage、legal_actions、result）
+    - 实现 `get_legal_actions()` 返回合法动作列表（可打手牌+可用药水+end_turn）
+    - 过滤能量不足、playable=False、目标已死亡的动作
+    - _设计文档：State JSON 结构、Bridge 通信协议章节_
+    - _需求：8.1、8.2、8.3、8.4_
+  - [ ] 9.8 先写合法动作和 preview_damage 单元测试
+    - 测试能量为 0 时合法动作仅含 end_turn 和可用药水
+    - 测试 preview_damage 与实际伤害一致（相同 Buff 状态下）
+    - 测试药水使用后槽位变为 null，不再出现在 legal_actions
+    - _需求：8.1、8.3、8.4、9.6_
+  - [ ]* 9.9 为初始化后 State 完整性编写属性测试
+    - **属性 1：初始化后 State 完整性**
+    - **验证：需求 1.1、1.2**
+    - 文件：`tests/property/test_combat_properties.py`
+  - [ ]* 9.10 为非法资源 ID 拒绝初始化编写属性测试
+    - **属性 2：非法资源 ID 拒绝初始化**
+    - **验证：需求 1.3**
+    - 文件：`tests/property/test_combat_properties.py`
+  - [ ]* 9.11 为 exhaust 牌进入 exhaust_pile 编写属性测试
+    - **属性 9：exhaust 牌进入 exhaust_pile**
+    - **验证：需求 3.2（隐含）**
+    - 文件：`tests/property/test_combat_properties.py`
+  - [ ]* 9.12 为不可打出的牌不出现在合法动作中编写属性测试
+    - **属性 10：不可打出的牌不出现在合法动作中**
+    - **验证：需求 8.1、8.3**
+    - 文件：`tests/property/test_combat_properties.py`
+  - [ ]* 9.13 为合法动作可执行性保证编写属性测试
+    - **属性 11：合法动作可执行性保证**
+    - **验证：需求 8.4**
+    - 文件：`tests/property/test_combat_properties.py`
+  - [ ]* 9.14 为所有敌人死亡时战斗胜利编写属性测试
+    - **属性 14：所有敌人死亡时战斗胜利**
+    - **验证：需求 2（死亡检查）、7.8**
+    - 文件：`tests/property/test_combat_properties.py`
+  - [ ]* 9.15 为 Player HP≤0 时战斗失败编写属性测试
+    - **属性 15：Player HP≤0 时战斗失败**
+    - **验证：需求 2（死亡检查）、7.8**
+    - 文件：`tests/property/test_combat_properties.py`
+  - [ ]* 9.16 为 sequential_loop 敌人循环顺序编写属性测试
+    - **属性 16：sequential_loop 敌人按固定顺序循环**
+    - **验证：需求 5.2**
+    - 文件：`tests/property/test_combat_properties.py`
+  - [ ]* 9.17 为 preview_damage 与实际伤害一致编写属性测试
+    - **属性 17：preview_damage 与实际伤害一致**
+    - **验证：设计决策（伤害预览计算）**
+    - 文件：`tests/property/test_combat_properties.py`
+  - [ ]* 9.18 为 Intent 列表与 Move intents 字段一致编写属性测试
+    - **属性 19：Intent 列表与 Move 的 intents 字段一致**
+    - **验证：需求 5.5**
+    - 文件：`tests/property/test_combat_properties.py`
+  - [ ]* 9.19 为药水使用后从槽位移除编写属性测试
+    - **属性 20：药水使用后从槽位移除**
+    - **验证：需求 9.6**
+    - 文件：`tests/property/test_combat_properties.py`
+
+
+- [ ] 10. 检查点 — 确保所有测试通过
+  - 运行 `pytest tests/unit/ tests/property/ --run`，确保所有测试通过
+  - 如有失败，修复对应实现后继续
+
+- [ ] 11. Runner（SingleBattleRunner + CampaignRunner）
+  - [ ] 11.1 先写 Runner 单元测试
+    - 测试 `SingleBattleRunner.from_json` 正确解析配置文件
+    - 测试 `CampaignRunner` 多场战斗时 HP 在战斗间正确继承（不超过 max_hp）
+    - 测试战斗失败时 Campaign 终止
+    - 文件：`tests/unit/test_runner.py`
+    - _设计文档：Runner 章节、CampaignRunner 设计_
+    - _需求：7.1_
+  - [ ] 11.2 实现 `SingleBattleRunner`（`runner/single.py`）
+    - 实现 `__init__(config, bridge)` 和 `run()` 方法
+    - 实现 `from_json(path, bridge)` 类方法
+    - run() 创建 CombatManager，调用 run()，结束后调用 bridge.on_battle_end(log)
+    - _设计文档：Runner 章节_
+  - [ ] 11.3 实现 `CampaignRunner`（`runner/campaign.py`）
+    - 实现 `__init__(config, bridge)` 和 `run()` 方法
+    - 实现 `from_json(path, bridge)` 类方法
+    - 按 enemy_sequence 顺序运行多场战斗，战斗间继承 HP，失败时终止
+    - 结束后调用 bridge.on_campaign_end(log)
+    - _设计文档：Runner 章节、CampaignRunner 设计_
+  - [ ]* 11.4 为 Campaign HP 继承编写属性测试
+    - **属性 18：Campaign 模式 HP 在战斗间正确继承**
+    - **验证：需求（CampaignRunner 设计）**
+    - 文件：`tests/property/test_campaign_properties.py`
+
+
+- [ ] 12. Bridge（ZmqBridge）
+  - [ ] 12.1 先写 Bridge 单元测试（mock ZeroMQ）
+    - 测试 `on_state_change` 序列化 state 为 JSON 并推送
+    - 测试 `on_battle_end` 推送 battle_log
+    - 测试 `on_campaign_end` 推送 campaign_log
+    - 测试收到合法 action 后调用对应 CombatManager 方法
+    - 测试收到未知 action 类型返回 `invalid_action` 错误
+    - 文件：`tests/unit/test_bridge.py`
+    - _需求：7.3、7.4、7.5、7.6、7.7_
+  - [ ] 12.2 实现 `ZmqBridge` 类（`bridge/zmq_bridge.py`）
+    - 实现 `__init__(address)` 方法，创建 ZeroMQ REP socket
+    - 实现 `on_state_change(state)` 方法：序列化为 JSON，send，recv action，解析并转发给 CombatManager
+    - 实现 `on_battle_end(log)` 和 `on_campaign_end(log)` 方法
+    - 所有公开方法提供类型注解
+    - _设计文档：ZmqBridge 章节、Bridge 通信协议章节_
+    - _需求：7.2、7.3、7.4、7.5、7.6、7.7、7.10_
+
+
+- [ ] 13. 端到端集成测试
+  - [ ] 13.1 编写单场战斗集成测试（不依赖 ZeroMQ）
+    - 使用 mock bridge 回调，测试完整战斗流程（初始化→出牌→结束回合→敌人行动→胜利/失败）
+    - 测试遗物效果在战斗中正确触发（如 bag_of_preparation 在 battle_start 额外抓 2 张）
+    - 测试 Buff/Debuff 在回合间正确减层
+    - 文件：`tests/unit/test_integration.py`
+    - _需求：1、2、3、4、5、6_
+  - [ ] 13.2 编写 Campaign 集成测试
+    - 测试多场战斗 HP 继承、胜利后进入下一场、失败时终止
+    - 文件：`tests/unit/test_integration.py`
+    - _需求：CampaignRunner 设计_
+
+- [ ] 14. 最终检查点 — 确保所有测试通过
+  - 运行 `pytest tests/ --run`，确保全部单元测试和属性测试通过
+  - 如有失败，修复对应实现后继续
+
+## 备注
+
+- 标注 `*` 的子任务为可选测试任务，可在 MVP 阶段跳过
+- 每个属性测试使用 `@settings(max_examples=100)` 配置
+- 每个属性测试注释格式：`# Feature: sts2-battle-simulator, Property {N}: {property_text}`
+- 属性测试所需的 Hypothesis 策略（如 `st_battle_state()`）统一定义在 `tests/property/conftest.py`
+- 每个 Battle 实例完全独立，无全局共享状态，支持多进程并行
